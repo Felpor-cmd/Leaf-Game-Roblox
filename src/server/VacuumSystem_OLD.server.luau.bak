@@ -1,0 +1,283 @@
+-- VacuumSystem.server.luau
+-- Sistema de transformação e aspiração de folhas
+
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+
+-- Configurações do sistema
+local VACUUM_RANGE = 20 -- Distância máxima para aspirar folhas
+local VACUUM_FORCE = 50 -- Força de atração das folhas
+local DETECTION_ANGLE = 120 -- Ângulo de detecção frontal (graus)
+local VACUUM_UPDATE_RATE = 0.1 -- Atualiza aspiração a cada 0.1 segundos (10 FPS ao invés de 60 FPS)
+
+-- Variáveis de controle
+local playersWithVacuum = {} -- Tabela para rastrear jogadores com poder
+local vacuumConnections = {} -- Conexões dos loops de aspiração
+local lastVacuumUpdate = {} -- Última atualização para cada jogador
+local cachedLeaves = {} -- Cache de folhas para evitar busca constante
+
+-- Referências
+local transformWall = workspace:WaitForChild("TransformWall")
+
+-- Função para atualizar cache de folhas (executa menos frequentemente)
+local function updateLeavesCache()
+    cachedLeaves = {}
+    
+    for _, obj in pairs(workspace:GetChildren()) do
+        -- Verifica se é uma folha spawnnada
+        if obj.Name:find("SpawnedLeaf_") and (obj:IsA("Part") or obj:IsA("MeshPart") or obj:IsA("Model")) then
+            table.insert(cachedLeaves, obj)
+        end
+    end
+end
+
+-- Atualiza cache a cada 0.5 segundos
+spawn(function()
+    while true do
+        updateLeavesCache()
+        wait(0.5) -- Cache atualizado 2 vezes por segundo
+    end
+end)
+
+-- Função para verificar se a folha está na frente do jogador
+local function isLeafInFront(character, leaf)
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return false end
+    
+    local playerPosition = humanoidRootPart.Position
+    local playerLookDirection = humanoidRootPart.CFrame.LookVector
+    local leafPosition = leaf.Position
+    
+    -- Vetor da posição do jogador para a folha
+    local toLeaf = (leafPosition - playerPosition).Unit
+    
+    -- Calcula o ângulo entre a direção do olhar e a direção da folha
+    local dotProduct = playerLookDirection:Dot(toLeaf)
+    local angle = math.deg(math.acos(math.clamp(dotProduct, -1, 1)))
+    
+    -- Debug: mostra informações do ângulo
+    if angle <= DETECTION_ANGLE / 2 then
+        print("Folha detectada na frente! Ângulo:", math.floor(angle), "graus")
+        return true
+    end
+    
+    return false
+end
+
+-- Função para aspirar folhas
+local function vacuumLeaves(player)
+    local character = player.Character
+    if not character then return end
+    
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+    
+    local leavesFound = 0
+    local leavesInRange = 0
+    local leavesInFront = 0
+    local totalObjects = 0
+    local debugObjects = {}
+    
+    -- Busca por folhas spawnnadas no workspace
+    for _, obj in pairs(workspace:GetChildren()) do
+        totalObjects = totalObjects + 1
+        
+        -- Debug: adiciona nome do objeto para análise
+        if obj.Name:find("Leaf") or obj.Name:find("Spawn") then
+            table.insert(debugObjects, obj.Name)
+        end
+        
+        -- Verifica se é uma folha spawnnada (detecção mais ampla)
+        local isLeaf = false
+        local debugReason = ""
+        
+        if obj.Name:find("SpawnedLeaf_") then
+            isLeaf = true
+            debugReason = "Nome SpawnedLeaf_"
+        elseif obj:IsA("Part") and obj:FindFirstChild("LeafTag") then
+            isLeaf = true
+            debugReason = "Part com LeafTag"
+        elseif obj:IsA("MeshPart") and obj:FindFirstChild("LeafTag") then
+            isLeaf = true
+            debugReason = "MeshPart com LeafTag"
+        elseif obj:IsA("Model") and obj.Name:find("SpawnedLeaf_") then
+            isLeaf = true
+            debugReason = "Model SpawnedLeaf_"
+        elseif (obj:IsA("Part") or obj:IsA("MeshPart")) and obj.Name:find("Leaf") and obj.Parent == workspace then
+            isLeaf = true
+            debugReason = "Part/MeshPart com 'Leaf' no nome"
+        end
+        
+        if isLeaf and (obj:IsA("Part") or obj:IsA("Model") or obj:IsA("MeshPart")) then
+            leavesFound = leavesFound + 1
+            print("✅ FOLHA DETECTADA:", obj.Name, "| Tipo:", obj.ClassName, "| Razão:", debugReason)
+            
+            -- Para Models, pega a PrimaryPart ou primeira Part/MeshPart
+            local leafPart = obj
+            if obj:IsA("Model") then
+                leafPart = obj.PrimaryPart or obj:FindFirstChildOfClass("Part") or obj:FindFirstChildOfClass("MeshPart")
+            end
+            
+            if leafPart then
+                local distance = (leafPart.Position - humanoidRootPart.Position).Magnitude
+                
+                print("� Distância da folha:", math.floor(distance), "| Ancorada:", leafPart.Anchored, "| Posição:", leafPart.Position)
+                
+                -- Verifica se está no alcance
+                if distance <= VACUUM_RANGE then
+                    leavesInRange = leavesInRange + 1
+                    print("🎯 Folha no alcance!")
+                    
+                    -- Verifica se está na frente do jogador
+                    if isLeafInFront(character, leafPart) then
+                        leavesInFront = leavesInFront + 1
+                        print("🌪️ Aspirando folha a", math.floor(distance), "studs de distância")
+                        
+                        -- Remove qualquer física existente
+                        for _, child in pairs(leafPart:GetChildren()) do
+                            if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
+                                child:Destroy()
+                            end
+                        end
+                        
+                        -- Força desancoragem
+                        leafPart.Anchored = false
+                        leafPart.CanCollide = false
+                        
+                        -- Cria nova força de atração
+                        local bodyVelocity = Instance.new("BodyVelocity")
+                        bodyVelocity.Name = "VacuumForce"
+                        bodyVelocity.MaxForce = Vector3.new(10000, 10000, 10000)
+                        
+                        -- Calcula direção para o jogador
+                        local direction = (humanoidRootPart.Position - leafPart.Position).Unit
+                        local force = VACUUM_FORCE * 2
+                        
+                        bodyVelocity.Velocity = direction * force
+                        bodyVelocity.Parent = leafPart
+                        
+                        print("💨 Força aplicada:", force, "| Direção:", direction)
+                        
+                        -- Se a folha está muito próxima, coleta ela
+                        if distance < 5 then
+                            print("✅ Jogador", player.Name, "aspirou uma folha!")
+                            obj:Destroy()
+                        end
+                    else
+                        print("❌ Folha não está na frente do jogador")
+                    end
+                else
+                    print("❌ Folha fora do alcance:", math.floor(distance), "/", VACUUM_RANGE)
+                end
+            end
+        end
+    end
+    
+    -- Debug a cada 3 segundos
+    if tick() % 3 < 0.017 then
+        print("🔍 Debug:", player.Name, "- Total objetos:", totalObjects, "| Folhas:", leavesFound, "| Alcance:", leavesInRange, "| Frente:", leavesInFront)
+        print("🗂️ Objetos com 'Leaf':", table.concat(debugObjects, ", "))
+    end
+end
+
+-- Função para dar poderes de aspirador ao jogador
+local function giveVacuumPower(player)
+    if playersWithVacuum[player] then return end -- Já tem o poder
+    
+    playersWithVacuum[player] = true
+    print("🌪️ Jogador", player.Name, "ganhou poderes de aspirador!")
+    
+    -- Efeito visual no jogador (opcional)
+    local character = player.Character
+    if character then
+        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        if humanoidRootPart then
+            -- Adiciona um efeito visual
+            local attachment = Instance.new("Attachment")
+            attachment.Name = "VacuumEffect"
+            attachment.Parent = humanoidRootPart
+            
+            -- Aqui você pode adicionar ParticleEmitter ou outros efeitos visuais
+        end
+    end
+    
+    -- Inicia o loop de aspiração para este jogador
+    vacuumConnections[player] = RunService.Heartbeat:Connect(function()
+        if playersWithVacuum[player] then -- Verifica se ainda tem o poder
+            vacuumLeaves(player)
+        end
+    end)
+end
+
+-- Função para remover poderes de aspirador do jogador
+local function removeVacuumPower(player)
+    if not playersWithVacuum[player] then return end -- Não tem o poder
+    
+    playersWithVacuum[player] = nil
+    print("Jogador", player.Name, "perdeu poderes de aspirador!")
+    
+    -- Remove efeito visual
+    local character = player.Character
+    if character then
+        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        if humanoidRootPart then
+            local effect = humanoidRootPart:FindFirstChild("VacuumEffect")
+            if effect then
+                effect:Destroy()
+            end
+        end
+    end
+    
+    -- Para o loop de aspiração
+    if vacuumConnections[player] then
+        vacuumConnections[player]:Disconnect()
+        vacuumConnections[player] = nil
+    end
+end
+
+-- Função para detectar passagem pela parede
+local function onWallTouch(hit, player)
+    local character = hit.Parent
+    local humanoid = character:FindFirstChild("Humanoid")
+    
+    if humanoid and player then
+        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        if not humanoidRootPart then return end
+        
+        -- Determina de que lado da parede o jogador está
+        local wallPosition = transformWall.Position
+        local playerPosition = humanoidRootPart.Position
+        
+        -- Assume que a parede está orientada no eixo X
+        -- Lado esquerdo (X menor) = sem poder, Lado direito (X maior) = com poder
+        local isOnPowerSide = playerPosition.X > wallPosition.X
+        
+        if isOnPowerSide and not playersWithVacuum[player] then
+            -- Jogador entrou no lado do poder
+            giveVacuumPower(player)
+        elseif not isOnPowerSide and playersWithVacuum[player] then
+            -- Jogador saiu do lado do poder
+            removeVacuumPower(player)
+        end
+    end
+end
+
+-- Conecta eventos de toque na parede
+transformWall.Touched:Connect(function(hit)
+    local player = Players:GetPlayerFromCharacter(hit.Parent)
+    if player then
+        onWallTouch(hit, player)
+    end
+end)
+
+-- Limpeza quando jogador sai do jogo
+Players.PlayerRemoving:Connect(function(player)
+    if vacuumConnections[player] then
+        vacuumConnections[player]:Disconnect()
+        vacuumConnections[player] = nil
+    end
+    playersWithVacuum[player] = nil
+end)
+
+print("VacuumSystem iniciado! TransformWall detectará jogadores para dar/remover poderes de aspirador.")
+print("Alcance do aspirador:", VACUUM_RANGE, "studs | Ângulo frontal:", DETECTION_ANGLE, "graus")
