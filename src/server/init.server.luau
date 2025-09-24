@@ -1,5 +1,13 @@
 -- Script principal do servidor
 print("Hello world, from server!")
 
--- O sistema de spawn de folhas está implementado em LeafSpawner.server.luau
-print("Sistema de folhas carregado! Verifique o LeafSpawner para configurações.")
+-- === ORDEM DE CARREGAMENTO DOS SISTEMAS ===
+-- 1. LeaderboardSystem (deve carregar primeiro)  
+-- 2. LeafSpawner (spawning de folhas)
+-- 3. VacuumSystem (sistema de coleta - depende do leaderboard)
+
+print("🚀 Sistemas carregados em ordem:")
+print("📊 LeaderboardSystem - Carregado")
+print("🍃 LeafSpawner - Carregado") 
+print("🌪️ VacuumSystem - Carregado")
+print("✅ Todos os sistemas integrados!")

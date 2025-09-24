@@ -7,7 +7,7 @@ local Debris = game:GetService("Debris")
 
 -- Configurações do spawner
 local SPAWN_INTERVAL = 2 -- Intervalo entre spawns em segundos
-local MAX_LEAVES = 50 -- Máximo de folhas simultâneas (para de spawnar quando atingir)
+local MAX_LEAVES = 500 -- Máximo de folhas aumentado para alta capacidade
 
 -- Variáveis
 local lastSpawnTime = 0
@@ -50,13 +50,15 @@ local function createLeafFromModel()
     
     -- print("DEBUG: Folha criada com nome:", newLeaf.Name, "| Tipo:", newLeaf.ClassName)
     
-    -- Define posição aleatória na plataforma
+    -- Define posição aleatória na plataforma (efeito árvore)
     local platformSize = leavesSpawnPlatform.Size
     local platformPosition = leavesSpawnPlatform.Position
     
-    local randomX = platformPosition.X + math.random(-platformSize.X/2, platformSize.X/2)
-    local randomZ = platformPosition.Z + math.random(-platformSize.Z/2, platformSize.Z/2)
-    local spawnY = platformPosition.Y + platformSize.Y/2 + 10 -- Spawna acima da plataforma
+    -- Area de spawn mais ampla e mais alta para simular arvore
+    local spawnRadius = platformSize.X/2 + 5 -- Area um pouco maior que a plataforma
+    local randomX = platformPosition.X + math.random(-spawnRadius, spawnRadius)
+    local randomZ = platformPosition.Z + math.random(-spawnRadius, spawnRadius)
+    local spawnY = platformPosition.Y + platformSize.Y/2 + 25 -- Altura de arvore (25 studs acima)
     
     -- Altura mínima onde a folha deve parar (superfície da plataforma)
     local minY = platformPosition.Y + platformSize.Y/2 + newLeaf.Size.Y/2
@@ -66,29 +68,29 @@ local function createLeafFromModel()
     newLeaf.CanCollide = false
     newLeaf.Position = Vector3.new(randomX, spawnY, randomZ)
     
-    -- Adiciona uma tag para identificar folhas spawnnadas
-    local stringValue = Instance.new("StringValue")
-    stringValue.Name = "LeafTag"
-    stringValue.Value = "SpawnedLeaf"
-    stringValue.Parent = newLeaf
+    -- Remove tag desnecessaria (otimizacao)
+    -- local stringValue = Instance.new("StringValue")
+    -- stringValue.Name = "LeafTag"
+    -- stringValue.Value = "SpawnedLeaf"
+    -- stringValue.Parent = newLeaf
     
-    -- Adiciona física para a folha cair
+    -- Adiciona física para queda realista de folha de arvore
     local bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
+    bodyVelocity.MaxForce = Vector3.new(3000, 3000, 3000)
     bodyVelocity.Velocity = Vector3.new(
-        math.random(-5, 5), -- Movimento horizontal aleatório
-        -10, -- Queda
-        math.random(-5, 5)
+        math.random(-8, 8), -- Movimento horizontal mais amplo (vento)
+        -6, -- Queda mais suave (folhas caem devagar)
+        math.random(-8, 8)
     )
     bodyVelocity.Parent = newLeaf
     
-    -- Adiciona rotação para a folha girar no ar
+    -- Adiciona rotação mais suave para folhas flutuando
     local bodyAngularVelocity = Instance.new("BodyAngularVelocity")
-    bodyAngularVelocity.MaxTorque = Vector3.new(4000, 4000, 4000)
+    bodyAngularVelocity.MaxTorque = Vector3.new(2000, 2000, 2000)
     bodyAngularVelocity.AngularVelocity = Vector3.new(
-        math.random(-10, 10), -- Rotação em X (pitch)
-        math.random(-10, 10), -- Rotação em Y (yaw)
-        math.random(-10, 10)  -- Rotação em Z (roll)
+        math.random(-5, 5), -- Rotação mais suave
+        math.random(-5, 5), 
+        math.random(-5, 5)
     )
     bodyAngularVelocity.Parent = newLeaf
     
@@ -113,14 +115,14 @@ local function createLeafFromModel()
                 bodyAngularVelocity:Destroy()
             end
             
-            -- Adiciona BodyVelocity para manter posicao estavel
-            local stabilizer = Instance.new("BodyVelocity")
-            stabilizer.MaxForce = Vector3.new(0, 1000, 0)
-            stabilizer.Velocity = Vector3.new(0, 0, 0) -- Sem movimento, apenas estabiliza
+            -- Sistema de estabilizacao otimizado
+            local stabilizer = Instance.new("BodyPosition")
+            stabilizer.MaxForce = Vector3.new(0, 2000, 0)
+            stabilizer.Position = Vector3.new(currentPos.X, alignedY, currentPos.Z)
             stabilizer.Parent = newLeaf
             
-            -- Remove estabilizador após a folha se acomodar
-            Debris:AddItem(stabilizer, 2)
+            -- Remove estabilizador rapidamente (otimizacao)
+            Debris:AddItem(stabilizer, 1)
             
             -- Desconecta o loop
             connection:Disconnect()
@@ -129,9 +131,9 @@ local function createLeafFromModel()
         end
     end)
     
-    -- Remove a velocidade e rotação após um tempo para deixar a folha cair naturalmente
-    Debris:AddItem(bodyVelocity, 2)
-    Debris:AddItem(bodyAngularVelocity, 2)
+    -- Remove a velocidade e rotação após tempo suficiente para queda completa
+    Debris:AddItem(bodyVelocity, 4) -- Tempo maior para queda de altura maior
+    Debris:AddItem(bodyAngularVelocity, 4)
     
     -- Adiciona a folha ao workspace
     newLeaf.Parent = workspace
@@ -140,17 +142,27 @@ local function createLeafFromModel()
     -- Adiciona à lista de folhas ativas
     table.insert(activeLeaves, newLeaf)
     
-    -- Sistema de detecção de toque do jogador
+    -- Sistema de detecção por toque (BACKUP - integrado com leaderboard)
     local function onTouch(hit)
+        -- Verifica se hit e hit.Parent existem antes de usar
+        if not hit or not hit.Parent then return end
+        
         local humanoid = hit.Parent:FindFirstChild("Humanoid")
         if humanoid then
             -- Verifica se é realmente um jogador
             local player = game.Players:GetPlayerFromCharacter(hit.Parent)
             if player then
-                -- print("Jogador", player.Name, "coletou uma folha!")
+                print("👋 [BACKUP-TOUCH] Coletando folha de", player.Name)
+                
+                -- Atualiza leaderboard (integração com sistema)
+                if _G.LeaderboardSystem then
+                    _G.LeaderboardSystem.updateScore(player, 1)
+                end
                 
                 -- Remove folha imediatamente
-                newLeaf:Destroy()
+                if newLeaf and newLeaf.Parent then
+                    newLeaf:Destroy()
+                end
             end
         end
     end
@@ -218,5 +230,6 @@ end
 -- Conecta o loop principal
 RunService.Heartbeat:Connect(onHeartbeat)
 
-print("LeafSpawner iniciado! Folhas serão spawnadas a cada", SPAWN_INTERVAL, "segundos.")
-print("Máximo de", MAX_LEAVES, "folhas. Toque nas folhas para coletá-las!")
+print("🌳 LeafSpawner iniciado! Folhas caem da arvore a cada", SPAWN_INTERVAL, "segundos.")
+print("🍃 Maximo de", MAX_LEAVES, "folhas. Altura de queda: 25 studs (efeito arvore)")
+print("💨 Fisica realista: Queda suave com movimento de vento")
