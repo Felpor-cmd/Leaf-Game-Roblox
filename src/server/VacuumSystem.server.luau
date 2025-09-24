@@ -22,6 +22,111 @@ local transformWall = workspace:WaitForChild("TransformWall")
 local leavesSpawnPlatform = workspace:WaitForChild("LeavesSpawn")
 
 -- === FUNCOES UTILITARIAS OTIMIZADAS ===
+local function createNeonTrail(leafPart)
+    -- Remove trilha existente se houver
+    local existingTrail = leafPart:FindFirstChild("NeonTrail")
+    if existingTrail then
+        existingTrail:Destroy()
+    end
+    
+    -- Cria anexo para a trilha
+    local attachment0 = Instance.new("Attachment")
+    attachment0.Name = "TrailAttachment0"
+    attachment0.Position = Vector3.new(0, 0, 0)
+    attachment0.Parent = leafPart
+    
+    local attachment1 = Instance.new("Attachment")  
+    attachment1.Name = "TrailAttachment1"
+    attachment1.Position = Vector3.new(0, 0, 0)
+    attachment1.Parent = leafPart
+    
+    -- Cria a trilha neon
+    local trail = Instance.new("Trail")
+    trail.Name = "NeonTrail"
+    trail.Attachment0 = attachment0
+    trail.Attachment1 = attachment1
+    
+    -- Configurações visuais da trilha
+    trail.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 255, 127)),    -- Verde neon
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(127, 255, 212)), -- Verde claro
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255))    -- Branco
+    }
+    trail.Transparency = NumberSequence.new{
+        NumberSequenceKeypoint.new(0, 0.2),   -- Início mais opaco
+        NumberSequenceKeypoint.new(1, 1.0)    -- Final transparente
+    }
+    trail.Lifetime = 0.8        -- Duração da trilha
+    trail.MinLength = 0.1       -- Comprimento mínimo
+    trail.FaceCamera = true     -- Sempre virada para câmera
+    trail.WidthScale = NumberSequence.new{
+        NumberSequenceKeypoint.new(0, 0.5),   -- Largura no início
+        NumberSequenceKeypoint.new(1, 0.1)    -- Largura no final
+    }
+    
+    trail.Parent = leafPart
+    
+    -- Remove trilha após um tempo para performance
+    game:GetService("Debris"):AddItem(trail, 3)
+    
+    -- Adiciona efeito de brilho à folha
+    local pointLight = Instance.new("PointLight")
+    pointLight.Name = "VacuumGlow"
+    pointLight.Color = Color3.fromRGB(0, 255, 127)
+    pointLight.Brightness = 2
+    pointLight.Range = 8
+    pointLight.Parent = leafPart
+    
+    -- Remove luz após um tempo
+    game:GetService("Debris"):AddItem(pointLight, 3)
+    
+    -- Adiciona efeito de partículas (estrelas/faíscas)
+    local sparkleAttachment = Instance.new("Attachment")
+    sparkleAttachment.Name = "SparkleAttachment"
+    sparkleAttachment.Parent = leafPart
+    
+    local sparkleEffect = Instance.new("ParticleEmitter")
+    sparkleEffect.Name = "VacuumSparkles"
+    sparkleEffect.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    sparkleEffect.Lifetime = NumberRange.new(0.3, 0.8)
+    sparkleEffect.Rate = 15
+    sparkleEffect.SpreadAngle = Vector2.new(45, 45)
+    sparkleEffect.Speed = NumberRange.new(2, 4)
+    sparkleEffect.Color = ColorSequence.new(Color3.fromRGB(127, 255, 212))
+    sparkleEffect.Size = NumberSequence.new{
+        NumberSequenceKeypoint.new(0, 0.1),
+        NumberSequenceKeypoint.new(1, 0.01)
+    }
+    sparkleEffect.Transparency = NumberSequence.new{
+        NumberSequenceKeypoint.new(0, 0.5),
+        NumberSequenceKeypoint.new(1, 1.0)
+    }
+    sparkleEffect.Parent = sparkleAttachment
+    
+    -- Remove efeito de partículas após um tempo
+    game:GetService("Debris"):AddItem(sparkleEffect, 3)
+    
+    return trail
+end
+
+local function removeVisualEffects(leafPart)
+    -- Remove todos os efeitos visuais da folha
+    local effectsToRemove = {
+        "NeonTrail",
+        "TrailAttachment0", 
+        "TrailAttachment1",
+        "VacuumGlow",
+        "SparkleAttachment"
+    }
+    
+    for _, effectName in pairs(effectsToRemove) do
+        local effect = leafPart:FindFirstChild(effectName)
+        if effect then
+            effect:Destroy()
+        end
+    end
+end
+
 local function updateLeavesCache()
     -- Atualiza cache apenas se necessario
     local currentTime = tick()
@@ -72,6 +177,9 @@ local function checkGlobalLeafCollection()
                         -- Coleta folha se muito próxima E não muito alta (sistema universal - mais sensível)
                         if distance < 3.5 and heightDifference < 6 then
                             print("🍃 [UNIVERSAL] Coletando folha de", player.Name, "- Distancia:", math.floor(distance * 100) / 100)
+                            
+                            -- Remove efeitos visuais antes de destruir
+                            removeVisualEffects(leafPart)
                             
                             -- Atualiza leaderboard
                             if _G.LeaderboardSystem then
@@ -143,6 +251,9 @@ RunService.Heartbeat:Connect(function()
                         if distance < 1.5 and heightDifference < 4 then
                             print("⚡ [INSTANTÂNEO] Coletando folha de", player.Name, "- Distancia:", math.floor(distance * 100) / 100)
                             
+                            -- Remove efeitos visuais antes de destruir
+                            removeVisualEffects(leafPart)
+                            
                             -- Atualiza leaderboard
                             if _G.LeaderboardSystem then
                                 _G.LeaderboardSystem.updateScore(player, 1)
@@ -212,6 +323,9 @@ local function vacuumLeaves(player)
                     leafPart.Anchored = false
                     leafPart.CanCollide = false
                     
+                    -- Cria trilha neon para efeito visual
+                    createNeonTrail(leafPart)
+                    
                     -- Cria forca de atracao
                     local bodyVelocity = Instance.new("BodyVelocity")
                     bodyVelocity.Name = "VacuumForce"
@@ -241,6 +355,9 @@ local function vacuumLeaves(player)
                 if distance < 5 then
                     -- Debug: confirma coleta
                     print("🍃 Coletando folha de", player.Name, "- Distancia:", math.floor(distance * 100) / 100)
+                    
+                    -- Remove efeitos visuais antes de destruir
+                    removeVisualEffects(leafPart)
                     
                     -- Atualiza leaderboard do player
                     if _G.LeaderboardSystem then
@@ -393,6 +510,7 @@ print("🔥 TRIPLE SYSTEM: Vacuo (5 studs) + Universal (3.5 studs) + Instantaneo
 print("⚡ Coleta: 60 FPS instantânea + 10 FPS universal + Touch backup")
 print("🌍 Sistema Universal: Coleta folhas mesmo sem poder de vacuo!")
 print("🔄 Detecção contínua: Verifica posição dos players a cada segundo")
+print("✨ EFEITOS VISUAIS: Trilhas neon + Brilho + Partículas nas folhas sugadas!")
 
 -- Verifica integracao com leaderboard
 if _G.LeaderboardSystem then
