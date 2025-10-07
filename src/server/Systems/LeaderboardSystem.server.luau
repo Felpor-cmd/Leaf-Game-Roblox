@@ -75,7 +75,7 @@ local function createLeaderboard(player)
         -- Adiciona display name com cor verde claro
         local displayName = Instance.new("StringValue")
         displayName.Name = "DisplayName" 
-        displayName.Value = "<font color='rgb(144, 238, 144)'>" .. LEADERBOARD_NAME .. "</font>"
+        displayName.Value = "<font color='rgb(144, 238, 144')>" .. LEADERBOARD_NAME .. "</font>"
         displayName.Parent = leavesCollected
     end
     
