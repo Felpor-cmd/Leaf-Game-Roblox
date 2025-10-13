@@ -46,6 +46,21 @@ local function onGuiButtonClicked(player, worldId)
         lastWorld = "MundoDaFloresta",
         worldId = worldId,
         spawnName = "WorldSpawn" .. tostring(worldId), -- usado no servidor de destino
+        -- Propaga dados de Spin entre mundos
+        spins = (function()
+            if _G.SpinSystem and _G.SpinSystem.getData then
+                local d = _G.SpinSystem.getData(player)
+                return d.spins
+            end
+            return nil
+        end)(),
+        nextSpinAt = (function()
+            if _G.SpinSystem and _G.SpinSystem.getData then
+                local d = _G.SpinSystem.getData(player)
+                return d.nextSpinAt
+            end
+            return nil
+        end)(),
     }
     
     -- Configura as opções de teleporte com os dados
@@ -76,6 +91,13 @@ local function onGuiButtonClicked(player, worldId)
             print("[Studio] Player movido para", destinationSpawn.Name, "com offset acima")
         else
             print("[Studio] Nenhum 'StudioTeleportSpawn" .. tostring(worldId) .. "' encontrado. Apenas simulando dados.")
+        end
+
+        -- Espelha também dados de spins como se tivesse ido para outro servidor
+        if _G.SpinSystem and _G.SpinSystem.getData then
+            local d = _G.SpinSystem.getData(player)
+            player:SetAttribute("Spins", d.spins)
+            player:SetAttribute("NextSpinAt", d.nextSpinAt or 0)
         end
         return
     end

@@ -13,8 +13,8 @@ local playerGui = LOCAL_PLAYER:WaitForChild("PlayerGui")
 -- Configs
 local TARGET_POSITION = UDim2.new(0.516, 0, 0.5, 0)
 local CLOSE_POSITION = UDim2.new(1.5, 0, 0.5, 0) -- fecha para fora da tela (lado direito)
-local TWEEN_TIME = 0.35
-local TWEEN_STYLE = Enum.EasingStyle.Quad
+local TWEEN_TIME = 0.4
+local TWEEN_STYLE = Enum.EasingStyle.Back
 local TWEEN_DIRECTION = Enum.EasingDirection.Out
 
 -- Utils
@@ -47,22 +47,20 @@ local function findButtonByNameContains(root: Instance, namePart: string): GuiBu
 	return nil
 end
 
-local function getGuiWorldsTarget(): GuiObject?
-	-- Tenta encontrar uma ScreenGui chamada (ou contendo) "GUI Worlds"
-	local guiWorlds = findScreenGuiByNameContains(playerGui, "gui worlds")
-	if guiWorlds then
+local function getPanelTarget(panelNamePart: string): GuiObject?
+	-- Resolve um painel por ScreenGui cujo nome contenha o trecho informado (case-insensitive)
+	local sg = findScreenGuiByNameContains(playerGui, panelNamePart)
+	if sg then
 		-- ScreenGui não tem Position; tentamos achar o primeiro GuiObject filho como content root
-		local mainObject = findFirstGuiObject(guiWorlds)
+		local mainObject = findFirstGuiObject(sg)
 		if mainObject then return mainObject end
 	end
-
-	-- Caso "GUI Worlds" seja diretamente um Frame no PlayerGui (menos comum)
+	-- Fallback: se o painel for diretamente um Frame no PlayerGui (menos comum)
 	for _, inst in ipairs(playerGui:GetDescendants()) do
-		if inst:IsA("GuiObject") and inst.Name:lower() == "gui worlds" then
+		if inst:IsA("GuiObject") and inst.Name:lower():find(panelNamePart:lower()) then
 			return inst
 		end
 	end
-
 	return nil
 end
 
@@ -97,10 +95,10 @@ local function safelyCloseGui(guiObj: GuiObject)
 	end)
 end
 
-local function openWorldsPanel()
-	local guiTarget = getGuiWorldsTarget()
+local function openPanel(panelNamePart: string)
+	local guiTarget = getPanelTarget(panelNamePart)
 	if not guiTarget then
-		warn("[UI] 'GUI Worlds' não encontrado (ScreenGui ou Frame). Verifique os nomes no PlayerGui.")
+		warn("[UI] Painel não encontrado:", panelNamePart, "(ScreenGui ou Frame). Verifique os nomes no PlayerGui.")
 		return
 	end
 	local parentScreenGui = guiTarget:FindFirstAncestorOfClass("ScreenGui")
@@ -138,66 +136,99 @@ local function connectLeftButtons()
 		if inst:IsA("GuiButton") and not inst:GetAttribute("UiHooked") then
 			inst:SetAttribute("UiHooked", true)
 			local nameLower = inst.Name:lower()
-			if nameLower:find("worlds") then
-				inst.MouseButton1Click:Connect(function()
-					print("[UI] Botão Worlds clicado -> abrir painel 'GUI Worlds'")
-					openWorldsPanel()
-				end)
-			else
-				inst.MouseButton1Click:Connect(function()
+			inst.MouseButton1Click:Connect(function()
+				-- Permitir que um botão declare explicitamente qual painel abrir via atributo
+				local targetPanel: string? = inst:GetAttribute("OpensPanel")
+				local nameLower = inst.Name:lower()
+				if not targetPanel or targetPanel == "" then
+					-- Heurísticas: mapeia alguns nomes comuns de botões para painéis
+					if nameLower:find("worlds") then
+						targetPanel = "gui worlds"
+					elseif nameLower:find("spin") or nameLower:find("wheel") then
+						targetPanel = "gui spin"
+					else
+						targetPanel = nil
+					end
+				end
+
+				if targetPanel then
+					print(string.format("[UI] Botão '%s' -> abrir painel '%s'", inst.Name, targetPanel))
+					openPanel(targetPanel)
+				else
 					print("[UI] Botão da esquerda (", inst.Name, ") clicado -> fechar painel atual, se houver")
 					closeCurrentPanel()
-				end)
-			end
+				end
+			end)
 		end
 	end
 
 	print("[UI] Botões da esquerda conectados.")
 end
 
-local function connectExitButton()
-	-- Procura por um botão chamado "Exit" dentro de um Frame "Exit" (ou nomes contendo)
-	local candidate: GuiButton? = nil
-	for _, inst in ipairs(playerGui:GetDescendants()) do
-		if inst:IsA("GuiButton") and inst.Name:lower():find("exit") then
-			local ancestor = inst.Parent
-			while ancestor and ancestor ~= playerGui do
-				if ancestor:IsA("Frame") or ancestor:IsA("ScreenGui") then
-					if ancestor.Name:lower():find("exit") then
-						candidate = inst
-						break
-					end
-				end
-				ancestor = ancestor.Parent
+local function isExitButton(btn: GuiButton): boolean
+	if btn.Name:lower():find("exit") then return true end
+	local ancestor = btn.Parent
+	while ancestor and ancestor ~= playerGui do
+		if (ancestor:IsA("Frame") or ancestor:IsA("ScreenGui")) and ancestor.Name:lower():find("exit") then
+			return true
+		end
+		ancestor = ancestor.Parent
+	end
+	return false
+end
+
+local function hookExitButton(btn: GuiButton)
+	if btn:GetAttribute("UiExitHooked") then return end
+	btn:SetAttribute("UiExitHooked", true)
+	btn.MouseButton1Click:Connect(function()
+		print("[UI] Botão Exit clicado -> fechar painel atual")
+		if currentOpenPanel then
+			closeCurrentPanel()
+		else
+			-- Fallback: se não houver painel registrado, tenta fechar o ScreenGui ancestral
+			local sg = btn:FindFirstAncestorOfClass("ScreenGui")
+			if sg then
+				local main = findFirstGuiObject(sg)
+				if main then safelyCloseGui(main) end
+				sg.Enabled = false
 			end
-			if candidate then break end
+		end
+	end)
+end
+
+local function connectExitButtons()
+	local foundAny = false
+	for _, inst in ipairs(playerGui:GetDescendants()) do
+		if inst:IsA("GuiButton") and isExitButton(inst) then
+			foundAny = true
+			hookExitButton(inst)
 		end
 	end
-
-	if candidate and not candidate:GetAttribute("UiHooked") then
-		candidate:SetAttribute("UiHooked", true)
-		candidate.MouseButton1Click:Connect(function()
-			print("[UI] Botão Exit clicado -> fechar painel atual")
-			closeCurrentPanel()
-		end)
-		print("[UI] Botão Exit conectado.")
+	if not foundAny then
+		warn("[UI] Nenhum botão Exit encontrado. Coloque um Frame/ScreenGui 'Exit' com um botão 'Exit'.")
 	else
-		if not candidate then
-			warn("[UI] Botão Exit não encontrado (procure por Frame/ScreenGui com nome contendo 'Exit').")
-		end
+		print("[UI] Botões Exit conectados (globais).")
 	end
 end
 
 -- Inicialização
 connectLeftButtons()
-connectExitButton()
+connectExitButtons()
 -- Conector de contador de folhas será adicionado abaixo
 
 -- Caso GUIs sejam inseridas depois, reconecta
 playerGui.DescendantAdded:Connect(function(desc)
 	if desc:IsA("ScreenGui") or desc:IsA("GuiButton") then
 		connectLeftButtons()
-		connectExitButton()
+		if desc:IsA("GuiButton") then
+			if isExitButton(desc) then
+				hookExitButton(desc)
+			end
+		end
+		-- Revarre ocasionalmente para capturar elementos que chegaram em ordem diferente
+		if desc:IsA("ScreenGui") then
+			connectExitButtons()
+		end
 	end
 end)
 
